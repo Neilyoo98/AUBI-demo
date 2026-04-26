@@ -1,1 +1,0 @@
-"""AUBI demo backend package."""
