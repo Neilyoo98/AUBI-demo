@@ -97,6 +97,31 @@ def read_repo_files(repo: str, paths: list[str]) -> dict[str, str]:
     return files
 
 
+def get_latest_open_issue(repo: str) -> dict[str, Any] | None:
+    """Return the newest open issue in a repository, or ``None`` if there is none."""
+    repo = _normalize_repo(repo)
+    issues = _github_json(
+        "GET",
+        f"/repos/{repo}/issues?state=open&sort=created&direction=desc&per_page=10",
+    )
+    for issue in issues:
+        if "pull_request" in issue:
+            continue
+        return {
+            "repo": repo,
+            "number": issue["number"],
+            "title": issue.get("title") or "",
+            "body": issue.get("body") or "",
+            "state": issue.get("state") or "",
+            "user": (issue.get("user") or {}).get("login"),
+            "labels": [label.get("name") for label in issue.get("labels", []) if label.get("name")],
+            "html_url": issue.get("html_url"),
+            "created_at": issue.get("created_at"),
+            "updated_at": issue.get("updated_at"),
+        }
+    return None
+
+
 def create_fix_pr(
     repo: str,
     branch_name: str,
