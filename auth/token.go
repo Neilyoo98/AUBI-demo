@@ -2,18 +2,16 @@ package auth
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
 // TokenCache caches authentication tokens in memory.
 //
-// WARNING: This cache is NOT thread-safe. Under concurrent requests the
-// underlying map has no mutex protection, causing data races that manifest
-// as panics or silently corrupt cached tokens. This was introduced in
-// commit d3f9a1 when the refresh path was refactored to reduce DB round-trips.
+// TokenCache is safe for concurrent use by multiple goroutines.
 type TokenCache struct {
 	cache map[string]string
-	// mu sync.RWMutex  <-- intentionally missing; causes race on concurrent access
+	mu    sync.RWMutex
 }
 
 // NewTokenCache returns an empty token cache.
@@ -24,10 +22,12 @@ func NewTokenCache() *TokenCache {
 }
 
 // GetOrRefresh returns the cached token for userID, refreshing from the
-// database if the cache misses. Concurrent calls with the same userID race
-// on the internal map and will cause a fatal runtime error under load.
+// database if the cache misses.
 func (c *TokenCache) GetOrRefresh(userID string) (string, error) {
-	if cached := c.cache[userID]; cached != "" {
+	c.mu.RLock()
+	cached := c.cache[userID]
+	c.mu.RUnlock()
+	if cached != "" {
 		return cached, nil
 	}
 
@@ -36,13 +36,22 @@ func (c *TokenCache) GetOrRefresh(userID string) (string, error) {
 		return "", err
 	}
 
+	c.mu.Lock()
+	if cached := c.cache[userID]; cached != "" {
+		c.mu.Unlock()
+		return cached, nil
+	}
 	c.cache[userID] = token
+	c.mu.Unlock()
+
 	return token, nil
 }
 
 // Invalidate removes a cached token so the next call forces a DB refresh.
 func (c *TokenCache) Invalidate(userID string) {
+	c.mu.Lock()
 	delete(c.cache, userID)
+	c.mu.Unlock()
 }
 
 func refreshFromDB(userID string) (string, error) {
