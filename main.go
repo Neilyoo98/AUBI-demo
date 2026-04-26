@@ -1,15 +1,28 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Neilyoo98/AUBI-demo/auth"
 	"github.com/Neilyoo98/AUBI-demo/config"
 	"github.com/Neilyoo98/AUBI-demo/handlers"
 	"github.com/Neilyoo98/AUBI-demo/middleware"
+)
+
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 15 * time.Second
+	idleTimeout       = 60 * time.Second
+	shutdownTimeout   = 10 * time.Second
 )
 
 func main() {
@@ -24,9 +37,45 @@ func main() {
 	handler := middleware.RateLimit(mux, cfg.RateLimit)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("AUBI-demo server starting on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatal(err)
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		log.Printf("AUBI-demo server starting on %s", addr)
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	shutdownSignals := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(shutdownSignals)
+
+	// Manual shutdown verification: run `go run .`, send SIGINT or SIGTERM,
+	// and confirm the process logs graceful shutdown before exiting within shutdownTimeout.
+	select {
+	case err := <-serverErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case sig := <-shutdownSignals:
+		log.Printf("received %s; shutting down gracefully", sig)
+
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		if err := server.Shutdown(ctx); err != nil {
+			log.Fatalf("server shutdown failed: %v", err)
+		}
+		if err := <-serverErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+		log.Print("server stopped gracefully")
 	}
 }
 
