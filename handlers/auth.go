@@ -2,10 +2,31 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/Neilyoo98/AUBI-demo/auth"
 )
+
+var validUserID = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+
+const maxUserIDLen = 128
+
+func validateUserID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", fmt.Errorf("missing user_id")
+	}
+	if len(id) > maxUserIDLen {
+		return "", fmt.Errorf("user_id too long")
+	}
+	if !validUserID.MatchString(id) {
+		return "", fmt.Errorf("invalid user_id")
+	}
+	return id, nil
+}
 
 type tokenResponse struct {
 	UserID string `json:"user_id"`
@@ -19,9 +40,9 @@ func TokenHandler(cache *auth.TokenCache) http.HandlerFunc {
 			return
 		}
 
-		userID := r.URL.Query().Get("user_id")
-		if userID == "" {
-			http.Error(w, "missing user_id", http.StatusBadRequest)
+		userID, verr := validateUserID(r.URL.Query().Get("user_id"))
+		if verr != nil {
+			http.Error(w, verr.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -43,9 +64,9 @@ func InvalidateHandler(cache *auth.TokenCache) http.HandlerFunc {
 			return
 		}
 
-		userID := r.URL.Query().Get("user_id")
-		if userID == "" {
-			http.Error(w, "missing user_id", http.StatusBadRequest)
+		userID, verr := validateUserID(r.URL.Query().Get("user_id"))
+		if verr != nil {
+			http.Error(w, verr.Error(), http.StatusBadRequest)
 			return
 		}
 
